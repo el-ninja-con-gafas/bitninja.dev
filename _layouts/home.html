@@ -1,0 +1,30 @@
+---
+layout: base
+---
+<div class="home">
+  {{ content }}
+  
+  <h2 class="section-title">Articles</h2>
+  <div class="post-list">
+    {% assign articles = site.pages | where_exp: "item", "item.path contains 'posts/'" | sort: 'date' | reverse %}
+    
+    {% for post in articles %}
+      {% if post.title %}
+      <article class="post-card">
+        <span class="post-meta">{{ post.date | date: "%b %d, %Y" }}</span>
+        <h3 class="post-title">
+          <a href="{{ post.url | relative_url }}">{{ post.title | escape }}</a>
+        </h3>
+        {% if post.description %}
+          <p class="post-description">{{ post.description }}</p>
+        {% endif %}
+        <div class="post-tags">
+          {% for tag in post.tags %}
+            <span class="tag">{{ tag }}</span>
+          {% endfor %}
+        </div>
+      </article>
+      {% endif %}
+    {% endfor %}
+  </div>
+</div>

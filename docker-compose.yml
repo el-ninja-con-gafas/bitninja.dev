@@ -1,0 +1,19 @@
+services:
+  jekyll:
+    build: .
+    container_name: bitninja-dev
+    working_dir: /srv/jekyll
+    networks:
+      - bitninja-dev
+    ports:
+      - "4000:4000"
+      - "35729:35729"
+    volumes:
+      - .:/srv/jekyll
+    command: sh -c "bundle install && bundle exec jekyll serve --host 0.0.0.0 --livereload --force_polling"
+    tty: true
+    stdin_open: true
+
+networks:
+  bitninja-dev:
+    name: bitninja-dev

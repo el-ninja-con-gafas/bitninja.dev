@@ -1,0 +1,9 @@
+title: bitninja.net
+
+# Exclude dev files from the Jekyll build
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - Dockerfile
+  - docker-compose.yml
+  - vendor/
