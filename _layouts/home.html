@@ -11,7 +11,12 @@ layout: base
     {% for post in articles %}
       {% if post.title %}
       <article class="post-card">
-        <span class="post-meta">{{ post.date | date: "%b %d, %Y" }}</span>
+        <span class="post-meta">
+          {{ post.date | date: "%b %d, %Y" }}
+        </span>
+        {% if post.image %}
+          <img src="{{ post.image | relative_url }}" alt="{{ post.title }}" class="post-thumbnail" style="width: 100%; height: 200px; object-fit: cover; border-radius: var(--radius-base); margin-bottom: var(--spacing-sm);">
+        {% endif %}
         <h3 class="post-title">
           <a href="{{ post.url | relative_url }}">{{ post.title | escape }}</a>
         </h3>
@@ -23,6 +28,12 @@ layout: base
             <span class="tag">{{ tag }}</span>
           {% endfor %}
         </div>
+        <br>
+        <span class="post-meta"> 
+          {% assign words = post.content | strip_html | number_of_words %}
+          {% assign reading_time = words | divided_by: 180 | plus: 1 %}
+          {{ reading_time }} min read
+        </span>
       </article>
       {% endif %}
     {% endfor %}

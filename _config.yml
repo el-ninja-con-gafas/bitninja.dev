@@ -1,4 +1,4 @@
-title: bitninja.net
+title: BitNinja Technology
 
 # Exclude dev files from the Jekyll build
 exclude:
@@ -7,3 +7,11 @@ exclude:
   - Dockerfile
   - docker-compose.yml
   - vendor/
+
+# Markdown and Syntax Highlighting Configuration
+markdown: kramdown
+highlighter: rouge
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
+  hard_wrap: true      # Automatically convert single line breaks to <br />
