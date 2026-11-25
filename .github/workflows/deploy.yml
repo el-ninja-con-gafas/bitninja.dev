@@ -8,6 +8,7 @@ on:
   repository_dispatch:
     types:
       - authenticator-updated
+      - blogs-updated
   workflow_dispatch:
 
 permissions:
@@ -22,7 +23,8 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      AUTHENTICATOR_REF: ${{ github.event.client_payload.source_sha || 'master' }}
+      AUTHENTICATOR_REF: ${{ github.event.action == 'authenticator-updated' && github.event.client_payload.source_sha || 'master' }}
+      BLOGS_REF: ${{ github.event.action == 'blogs-updated' && github.event.client_payload.source_sha || 'master' }}
 
     steps:
       - name: Check out BitNinja.dev
@@ -43,6 +45,7 @@ jobs:
             --exclude='documents/' \
             ./ _site/
 
+      # Document authenticator integration
       - name: Fetch the document-authenticator source
         uses: actions/checkout@v6
         with:
@@ -70,6 +73,36 @@ jobs:
           cp -a "$source_dir/index.html" "$target_dir/"
           cp -a "$source_dir/css" "$source_dir/js" "$source_dir/images" "$source_dir/records" "$target_dir/"
 
+      # Technical Journal integration
+      - name: Fetch the blogs.dev source
+        uses: actions/checkout@v6
+        with:
+          repository: el-ninja-con-gafas/blogs.dev
+          ref: ${{ env.BLOGS_REF }}
+          path: _blogs_source
+          token: ${{ secrets.BITNINJA_DEPLOY_TOKEN }}
+          persist-credentials: false
+
+      - name: Set up Ruby and install blog dependencies
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+          working-directory: _blogs_source
+
+      - name: Build the technical journal
+        working-directory: _blogs_source
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle exec jekyll build \
+            --destination "$GITHUB_WORKSPACE/_site/blogs"
+
+      # GitHub Pages configuration
+      - name: Prepare website for deployment
+        shell: bash
+        run: |
+          set -euo pipefail
           touch _site/.nojekyll
 
       - name: Publish assembled website to gh-pages
