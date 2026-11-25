@@ -1,0 +1,89 @@
+
+name: Build and deploy BitNinja.dev
+
+on:
+  push:
+    branches:
+      - master
+  repository_dispatch:
+    types:
+      - authenticator-updated
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      AUTHENTICATOR_REF: ${{ github.event.client_payload.source_sha || 'master' }}
+
+    steps:
+      - name: Check out BitNinja.dev
+        uses: actions/checkout@v6
+        with:
+          ref: master
+          persist-credentials: false
+
+      - name: Assemble main website
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='_site/' \
+            --exclude='documents/' \
+            ./ _site/
+
+      - name: Fetch the document-authenticator source
+        uses: actions/checkout@v6
+        with:
+          repository: el-ninja-con-gafas/document-authenticator
+          ref: ${{ env.AUTHENTICATOR_REF }}
+          path: _authenticator_source
+          token: ${{ secrets.BITNINJA_DEPLOY_TOKEN }}
+          persist-credentials: false
+
+      - name: Add the authenticator to the website
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_dir="_authenticator_source"
+          target_dir="_site/document-authenticator"
+
+          for required in index.html css js images records; do
+            if [[ ! -e "$source_dir/$required" ]]; then
+              echo "Required authenticator path is missing: $required" >&2
+              exit 1
+            fi
+          done
+
+          mkdir -p "$target_dir"
+          cp -a "$source_dir/index.html" "$target_dir/"
+          cp -a "$source_dir/css" "$source_dir/js" "$source_dir/images" "$source_dir/records" "$target_dir/"
+
+          touch _site/.nojekyll
+
+      - name: Publish assembled website to gh-pages
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.BITNINJA_DEPLOY_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd _site
+          git init
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --all
+          git commit -m "Deploy BitNinja.dev website"
+          git branch -M gh-pages
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force origin gh-pages
