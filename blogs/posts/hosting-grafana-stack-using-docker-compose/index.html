@@ -1,0 +1,1016 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BitNinja Technology</title>
+  <link rel="shortcut icon" type="image/x-icon" href="/blogs/images/logo.png">
+  <link rel="stylesheet" href="https://bitninja.dev/css/styles.css">
+  <link rel="stylesheet" href="/blogs/css/styles.css">
+  <link rel="stylesheet" href="/blogs/css/syntax.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+   <header class="header">
+        <a href="/blogs/" class="header__logo-link">
+            <img src="/blogs/images/logo.png" alt="BitNinja Technology Logo" class="header__logo">
+            <img src="/blogs/images/name.png" alt="BitNinja Technology" class="header__name-image">
+        </a>
+        <button class="header__nav-toggle" aria-label="Toggle navigation menu">
+            <span class="header__nav-toggle-icon"></span>
+            <span class="header__nav-toggle-icon"></span>
+            <span class="header__nav-toggle-icon"></span>
+        </button>
+    </header>
+
+  <main class="page-content container">
+    <!-- Floating Toggle Button (Top Left) -->
+<button id="toc-toggle-btn" class="toc-toggle-btn" aria-label="Toggle Table of Contents" title="Toggle Tree View">
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="3" y1="12" x2="21" y2="12"></line>
+    <line x1="3" y1="6" x2="21" y2="6"></line>
+    <line x1="3" y1="18" x2="21" y2="18"></line>
+  </svg>
+</button>
+
+<!-- Fixed Left Sidebar for TOC -->
+<aside class="toc-sidebar" id="toc-sidebar">
+  <div class="toc-header">
+    <h4>Contents</h4>
+    <button id="toc-close-btn" class="toc-close-btn" aria-label="Close Table of Contents">✕</button>
+  </div>
+  <div id="toc-content" class="toc-content">
+    <!-- JS will inject the TOC here -->
+  </div>
+</aside>
+
+<!-- Main Article Content -->
+<article class="post-content" id="main-article">
+  <header class="post-header">
+    <h1 class="post-page-title">Hosting Grafana Stack using Docker Compose</h1>
+    <p class="post-meta">
+      <time datetime="2025-03-18T00:00:00+00:00">
+        March 18, 2025
+      </time>
+      • 
+      
+      
+      25 min read
+    </p>
+  </header>
+
+  <div class="post-body">
+    <p><img src="/blogs/posts/hosting-grafana-stack-using-docker-compose/grafana-stack-using-docker-compose.webp" alt="Grafana Stack using Docker Compose" /></p>
+
+<h2 id="goal">Goal</h2>
+
+<p>This article serves as a beginner’s guide to hosting services in standalone mode for personal use. It aims to provide a clear understanding of the architecture of each service and the most suitable configurations. While the guide offers a foundational setup, the configuration can be modified to meet specific requirements.</p>
+
+<p>The script used in the article is available <a href="#installation-script">here</a>.</p>
+
+<h2 id="motivation">Motivation</h2>
+
+<p>Managing logs and metrics efficiently is crucial for maintaining visibility into system performance. I needed a centralized monitoring system to aggregate data from various applications and services running on my server. The goal was simple: consolidate logs and metrics into a single, scalable system that could seamlessly integrate with future projects.</p>
+
+<p>Initially, I considered the LGTM stack Loki, Grafana, Promtail and Prometheus where Promtail serves as the log aggregator. However, Promtail is being deprecated and would eventually lose support. This led me to explore Grafana Alloy, but despite significant effort, I could not get it to function correctly in my setup. Hence, for aggregation, I opted for the OpenTelemetry Collector due to its native support for multiple data sources, flexible architecture and seamless application instrumentation.</p>
+
+<p>However, deploying and configuring the stack was far from straightforward. Despite the abundance of documentation, very few resources focus on hosting services in a standalone environment. The configuration of Loki, Prometheus and OpenTelemetry and orchestrating them together was particularly challenging due to the extensive number of tuneable parameters.</p>
+
+<p>Despite the initial hurdles, choosing OpenTelemetry proved beneficial in future proofing the system because of its support for various deployment modes.</p>
+
+<hr />
+
+<h2 id="deployment-patterns-for-opentelemetry-collector">Deployment Patterns for OpenTelemetry Collector</h2>
+
+<p>OpenTelemetry can be deployed in three ways:</p>
+
+<ol>
+  <li><strong>No Collector Mode</strong>: Applications send telemetry data directly to monitoring backends.
+    <ul>
+      <li>Pros: Simplifies setup; reduces infrastructure overhead.</li>
+      <li>Cons: Limited flexibility; lacks processing capabilities.</li>
+      <li>Best for: Small scale applications with direct integration.</li>
+    </ul>
+  </li>
+  <li><strong>Agent Mode</strong>: A lightweight instance runs alongside applications, collecting and forwarding telemetry data.
+    <ul>
+      <li>Pros: Reduces application load; provides better resilience.</li>
+      <li>Cons: Requires deployment on each node.</li>
+      <li>Best for: Scenarios needing localized data collection and minimal overhead.</li>
+    </ul>
+  </li>
+  <li><strong>Gateway Mode</strong>: A centralized collector ingests data from multiple agents before forwarding it to storage solutions.
+    <ul>
+      <li>Pros: Enhances scalability and flexibility; supports aggregation and enrichment.</li>
+      <li>Cons: Introduces a single point of failure (unless deployed redundantly).</li>
+      <li>Best for: Large scale distributed systems requiring high availability.</li>
+    </ul>
+  </li>
+</ol>
+
+<p>I decided to go with the agent mode, setting up an OpenTelemetry Collector.</p>
+
+<h2 id="opentelemetry-collector-architecture">OpenTelemetry Collector Architecture</h2>
+
+<p>The OpenTelemetry Collector processes telemetry data through a pipeline consisting of four main components:</p>
+
+<ol>
+  <li><strong>Receivers</strong>: Ingest telemetry data from various sources (for example OTLP, Prometheus, Loki).</li>
+  <li><strong>Processors</strong>: Modify, filter and batch data before exporting it.</li>
+  <li><strong>Exporters</strong>: Send processed data to backends like Loki, Prometheus, or external monitoring platforms.</li>
+  <li><strong>Connectors</strong>: Bridge different data sources and sinks for better integration.</li>
+</ol>
+
+<p>Besides these pipeline components, <strong>extensions</strong> provide additional capabilities such as health checks, diagnostic tools and authentication mechanisms. Once configured, services must be explicitly enabled within the <code class="language-plaintext highlighter-rouge">service</code> section of the configuration file to function correctly.</p>
+
+<hr />
+
+<h2 id="configuration-of-opentelemetry-collector">Configuration of OpenTelemetry Collector</h2>
+
+<ol>
+  <li><strong>Configuring receivers</strong></li>
+</ol>
+
+<p>Receivers determine how the OpenTelemetry Collector ingests telemetry data. They are configured in the <code class="language-plaintext highlighter-rouge">receivers</code> section. Many receivers have default settings, allowing them to be configured simply by specifying their name. If customization is required, you can modify the configuration in this section. Any specified settings override the default values, if applicable.</p>
+
+<div class="language-yaml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">receivers</span><span class="pi">:</span>
+  <span class="na">otlp</span><span class="pi">:</span>
+    <span class="na">protocols</span><span class="pi">:</span>
+      <span class="na">http</span><span class="pi">:</span>
+        <span class="na">endpoint</span><span class="pi">:</span> <span class="s2">"</span><span class="s">0.0.0.0:4318"</span> <span class="c1"># Endpoint for receiving OTLP over HTTP</span>
+
+  <span class="na">otlp/loki</span><span class="pi">:</span>
+    <span class="na">protocols</span><span class="pi">:</span>
+      <span class="na">http</span><span class="pi">:</span>
+        <span class="na">endpoint</span><span class="pi">:</span> <span class="s2">"</span><span class="s">0.0.0.0:4317"</span> <span class="c1"># Endpoint for receiving Logs for Loki exporter</span>
+
+  <span class="na">prometheus</span><span class="pi">:</span>
+    <span class="na">config</span><span class="pi">:</span>
+      <span class="na">scrape_configs</span><span class="pi">:</span>
+        <span class="pi">-</span> <span class="na">job_name</span><span class="pi">:</span> <span class="s">otel-collector</span>
+          <span class="na">static_configs</span><span class="pi">:</span>
+            <span class="pi">-</span> <span class="na">targets</span><span class="pi">:</span>  <span class="c1"># Prometheus scrape target for OpenTelemetry Collector</span>
+</code></pre></div></div>
+
+<p>The OpenTelemetry Collector exposes its metrics on <code class="language-plaintext highlighter-rouge">localhost:8888</code>, which are then ingested by the Prometheus receiver on the same host. These metrics are subsequently exported using an exporter on port <code class="language-plaintext highlighter-rouge">8889</code>.</p>
+
+<p><em>It is essential to keep track of all port numbers to properly configure Docker and ensure access to them.</em></p>
+
+<ol>
+  <li><strong>Configuring processors</strong></li>
+</ol>
+
+<p>Processors manage and control the flow of telemetry data within the OpenTelemetry Collector. They take data from receivers, modify or transform it, and then pass it to exporters. Processing follows predefined rules or settings, which may include filtering, dropping, renaming, or recalculating telemetry, among other operations. The sequence of processors in a pipeline dictates the order in which these transformations are applied to the signal.</p>
+
+<p>In my case, I had no such requirements, so I did not define any processors. However, configuring a <code class="language-plaintext highlighter-rouge">memory_limiter</code> and a <code class="language-plaintext highlighter-rouge">batch</code> processor is essential.</p>
+
+<p>2.1 <strong>The <code class="language-plaintext highlighter-rouge">memory_limiter</code> processor</strong></p>
+
+<p>The <code class="language-plaintext highlighter-rouge">memory_limiter</code> helps prevent out of memory situations. As the collector processes various data types, its memory usage can fluctuate depending on the environment and workload. By implementing the <code class="language-plaintext highlighter-rouge">memory_limiter</code> processor, especially as the first processor in a pipeline, you can safeguard the system against unexpected spikes and maintain smoother operations.</p>
+
+<div class="language-yaml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">processors</span><span class="pi">:</span>
+  <span class="na">memory_limiter</span><span class="pi">:</span>
+    <span class="na">check_interval</span><span class="pi">:</span> <span class="s">1s</span> <span class="c1"># Check memory limits every 1 second</span>
+    <span class="na">limit_percentage</span><span class="pi">:</span> <span class="m">50</span> <span class="c1"># Limit memory usage to the percentage of available memory (hard limit)</span>
+    <span class="na">spike_limit_percentage</span><span class="pi">:</span> <span class="m">30</span> <span class="c1"># Limit memory usage to the percentage of available memory (soft limit)</span>
+
+  <span class="na">batch</span><span class="pi">:</span>
+</code></pre></div></div>
+
+<p>If memory consumption exceeds the <code class="language-plaintext highlighter-rouge">limit_percentage</code> (hard limit), the system forces garbage collection to free up memory. However, if it surpasses the <code class="language-plaintext highlighter-rouge">spike_limit_percentage</code> (soft limit), it starts rejecting new data to prevent further strain. The <code class="language-plaintext highlighter-rouge">memory_limiter</code> helps prevent system crashes, ensuring that as much data as possible is processed without permanent loss while effectively managing backpressure.</p>
+
+<p>2.2 <strong>The <code class="language-plaintext highlighter-rouge">batch</code> processor</strong></p>
+
+<p>The <code class="language-plaintext highlighter-rouge">batch</code> processor collects spans, metrics, or logs and organises them into batches. Batching improves data compression and minimises the number of outgoing connections needed for transmission. This processor supports both size based and time based batching.</p>
+
+<p>I have used the default configuration for the processor. You can find the various configuration parameters <a href="https://github.com/open-telemetry/opentelemetry-collector/blob/main/processor/batchprocessor/README.md">in the official documentation</a>.</p>
+
+<ol>
+  <li><strong>Configuring exporters</strong></li>
+</ol>
+
+<p>Exporters transmit data to one or more backends or destinations. They can operate in either a pull or push model and may support multiple data sources. Each entry in the <code class="language-plaintext highlighter-rouge">exporters</code> section defines an exporter instance. The key follows the <code class="language-plaintext highlighter-rouge">type/name</code> format, where <code class="language-plaintext highlighter-rouge">type</code> specifies the exporter type (for example <code class="language-plaintext highlighter-rouge">otlp</code>, <code class="language-plaintext highlighter-rouge">kafka</code>, <code class="language-plaintext highlighter-rouge">prometheus</code>) and <code class="language-plaintext highlighter-rouge">name</code> (optional) provides a unique identifier for multiple instances of the same type. You can find an extensive list of supported exporters <a href="https://opentelemetry.io/docs/languages/python/exporters/">in the official documentation</a>.</p>
+
+<div class="language-yaml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">exporters</span><span class="pi">:</span>
+  <span class="na">otlphttp</span><span class="pi">:</span>
+    <span class="na">endpoint</span><span class="pi">:</span> <span class="s2">"</span><span class="s">http://${HOST}:3100/otlp"</span> <span class="c1"># Export logs to Loki via OTLP</span>
+
+  <span class="na">loki</span><span class="pi">:</span>
+    <span class="na">endpoint</span><span class="pi">:</span> <span class="s2">"</span><span class="s">http://${HOST}:3100/loki/api/v1/push"</span> <span class="c1"># Export logs to Loki via API</span>
+
+  <span class="na">prometheus</span><span class="pi">:</span>
+    <span class="na">endpoint</span><span class="pi">:</span> <span class="s2">"</span><span class="s">0.0.0.0:8889"</span> <span class="c1"># Expose Prometheus metrics endpoint</span>
+    <span class="na">namespace</span><span class="pi">:</span> <span class="s">default</span> <span class="c1"># Namespace for the metrics</span>
+
+  <span class="na">prometheusremotewrite</span><span class="pi">:</span>
+    <span class="na">endpoint</span><span class="pi">:</span> <span class="s2">"</span><span class="s">http://${HOST}:9090/api/v1/write"</span> <span class="c1"># Remote write to Prometheus</span>
+    <span class="na">tls</span><span class="pi">:</span>
+      <span class="na">insecure</span><span class="pi">:</span> <span class="no">true</span> <span class="c1"># Allow insecure TLS connections</span>
+</code></pre></div></div>
+
+<p>However, simply configuring an exporter does not enable it. Exporters must be explicitly added to the appropriate pipelines within the <code class="language-plaintext highlighter-rouge">service</code> section to be active.</p>
+
+<ol>
+  <li><strong>Configuring services</strong></li>
+</ol>
+
+<p>The <code class="language-plaintext highlighter-rouge">service</code> section configures which components are enabled in the Collector based on the settings defined in the <code class="language-plaintext highlighter-rouge">receivers</code>, <code class="language-plaintext highlighter-rouge">processors</code>, <code class="language-plaintext highlighter-rouge">exporters</code> and <code class="language-plaintext highlighter-rouge">extensions</code> sections. If a component is configured but not referenced within the <code class="language-plaintext highlighter-rouge">service</code> section, it remains disabled.</p>
+
+<p>The <code class="language-plaintext highlighter-rouge">service</code> section consists of three subsections:</p>
+
+<ul>
+  <li><strong>Extensions</strong>: Extensions are optional components that enhance the functionality of the Collector. While they do not directly process or modify telemetry data, they provide valuable features such as health monitoring, service discovery and authentication.</li>
+  <li><strong>Pipelines</strong>: Pipelines define the flow of logs and metrics in the Collector: receivers → processors → exporters. A receiver, processor, or exporter can be used in multiple pipelines. When a processor is referenced in multiple pipelines, each pipeline receives its own separate instance. The configuration follows the <code class="language-plaintext highlighter-rouge">type/[name]</code> syntax, similar to other components.</li>
+  <li><strong>Telemetry</strong>: The <code class="language-plaintext highlighter-rouge">telemetry</code> configuration section enables observability for the Collector itself. You can find more information about it <a href="https://opentelemetry.io/docs/collector/internal-telemetry/#activate-internal-telemetry-in-the-collector">in the official documentation</a>.</li>
+</ul>
+
+<div class="language-yaml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">service</span><span class="pi">:</span>
+  <span class="na">pipelines</span><span class="pi">:</span>
+    <span class="na">logs/otlp</span><span class="pi">:</span>
+      <span class="na">receivers</span><span class="pi">:</span> <span class="pi">[</span><span class="nv">otlp</span><span class="pi">]</span> <span class="c1"># Use OTLP receiver for logs</span>
+      <span class="na">processors</span><span class="pi">:</span> <span class="pi">[</span><span class="nv">memory_limiter</span><span class="pi">,</span> <span class="nv">batch</span><span class="pi">]</span>
+      <span class="na">exporters</span><span class="pi">:</span> <span class="pi">[</span><span class="nv">otlphttp</span><span class="pi">]</span>
+
+    <span class="na">logs/loki</span><span class="pi">:</span>
+      <span class="na">receivers</span><span class="pi">:</span> <span class="pi">[</span><span class="nv">otlp/loki</span><span class="pi">]</span> <span class="c1"># Use Loki Exporter for logs</span>
+      <span class="na">processors</span><span class="pi">:</span> <span class="pi">[</span><span class="nv">memory_limiter</span><span class="pi">,</span> <span class="nv">batch</span><span class="pi">]</span>
+      <span class="na">exporters</span><span class="pi">:</span> <span class="pi">[</span><span class="nv">loki</span><span class="pi">]</span>
+
+    <span class="na">metrics</span><span class="pi">:</span>
+      <span class="na">receivers</span><span class="pi">:</span> <span class="pi">[</span><span class="nv">otlp</span><span class="pi">,</span> <span class="nv">prometheus</span><span class="pi">]</span> <span class="c1"># Use OTLP and Prometheus receivers for metrics</span>
+      <span class="na">processors</span><span class="pi">:</span> <span class="pi">[</span><span class="nv">memory_limiter</span><span class="pi">]</span>
+      <span class="na">exporters</span><span class="pi">:</span> <span class="pi">[</span><span class="nv">prometheus</span><span class="pi">,</span> <span class="nv">prometheusremotewrite</span><span class="pi">]</span>
+
+  <span class="na">telemetry</span><span class="pi">:</span>
+    <span class="na">logs</span><span class="pi">:</span>
+      <span class="na">processors</span><span class="pi">:</span>
+        <span class="pi">-</span> <span class="na">batch</span><span class="pi">:</span>
+      <span class="na">exporter</span><span class="pi">:</span>
+        <span class="na">otlp</span><span class="pi">:</span>
+          <span class="na">protocol</span><span class="pi">:</span> <span class="s">http/protobuf</span>
+          <span class="na">endpoint</span><span class="pi">:</span> <span class="s2">"</span><span class="s">http://${HOST}:4318"</span>
+</code></pre></div></div>
+
+<p>In this configuration, two separate pipelines handle logs: one uses OTLP over HTTP, while the other supports the deprecated Loki Exporter.</p>
+
+<p>For metrics, the OpenTelemetry Collector’s own metrics and those received via OTLP over HTTP are exported to Prometheus using <code class="language-plaintext highlighter-rouge">prometheus</code> and <code class="language-plaintext highlighter-rouge">prometheusremotewrite</code>, respectively. Additional configuration is required when setting up the Docker container <a href="#configuration-of-proxmox-ve-exporter">check here</a>.</p>
+
+<p>The logs generated by the OpenTelemetry Collector are ingested into Loki through the OTLP over HTTP receiver, using the <code class="language-plaintext highlighter-rouge">telemetry</code> service configuration.</p>
+
+<hr />
+
+<h2 id="configuration-of-loki">Configuration of Loki</h2>
+
+<p>Loki is a highly efficient, horizontally scalable log aggregation system developed by Grafana Labs. Loki is designed to be cost effective by indexing only metadata while storing log content as compressed chunks. This architecture makes it an ideal choice for observability.</p>
+
+<p>Loki functions optimally for different use cases, whether for small scale local logging or highly available, distributed deployments. I configure Loki to run as a standalone application.</p>
+
+<div class="language-yaml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">auth_enabled</span><span class="pi">:</span> <span class="no">false</span> <span class="c1"># Disable authentication</span>
+
+<span class="na">server</span><span class="pi">:</span>
+  <span class="na">http_listen_port</span><span class="pi">:</span> <span class="m">3100</span> <span class="c1"># HTTP port for the server to listen on</span>
+</code></pre></div></div>
+
+<p>Since I deployed the service in a local environment within a trusted network, authentication was disabled. However, if authentication is required, consider enabling it through reverse proxies like NGINX. While Loki itself does not provide built in authentication, it integrates well with external authentication mechanisms to secure access effectively.</p>
+
+<div class="language-yaml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">common</span><span class="pi">:</span>
+  <span class="na">instance_addr</span><span class="pi">:</span> <span class="s2">"</span><span class="s">$HOST"</span> <span class="c1"># Address at which the instance can be reached by other Loki instances</span>
+  <span class="na">path_prefix</span><span class="pi">:</span> <span class="s">/loki</span> <span class="c1"># Prefix for all HTTP endpoints</span>
+  <span class="na">storage</span><span class="pi">:</span>
+    <span class="na">filesystem</span><span class="pi">:</span>
+      <span class="na">chunks_directory</span><span class="pi">:</span> <span class="s">/loki/chunks</span> <span class="c1"># Directory to store chunks in</span>
+      <span class="na">rules_directory</span><span class="pi">:</span> <span class="s">/loki/rules</span> <span class="c1"># Directory to store rules in</span>
+  <span class="na">replication_factor</span><span class="pi">:</span> <span class="m">1</span> <span class="c1"># Number of replicas of each log entry</span>
+  <span class="na">ring</span><span class="pi">:</span>
+    <span class="na">kvstore</span><span class="pi">:</span>
+      <span class="na">store</span><span class="pi">:</span> <span class="s">inmemory</span> <span class="c1"># Key value store for the ring</span>
+</code></pre></div></div>
+
+<p>In a typical configuration, <code class="language-plaintext highlighter-rouge">instance_addr</code> specifies the address that other Loki instances use to communicate with this instance, while <code class="language-plaintext highlighter-rouge">path_prefix</code> is useful when running Loki behind a reverse proxy or within a subpath of a URL. These settings are particularly relevant for a publicly hosted distributed setup.</p>
+
+<p>Loki stores logs in chunks instead of individual log lines. The <code class="language-plaintext highlighter-rouge">chunks_directory</code> is where these log chunks are stored. The <code class="language-plaintext highlighter-rouge">rules_directory</code> is where Loki alerting rules are stored.</p>
+
+<p>The <code class="language-plaintext highlighter-rouge">ring</code> is a crucial component for deploying Loki in a distributed environment. It is a distributed key value store that tracks which Loki ingesters own specific data. It plays a crucial role in managing data distribution across multiple Loki instances in a cluster by handling sharding, distribution, query routing, replication and failure recovery.</p>
+
+<p>For a standalone deployment, configuring the ring and replication factor is not essential, as a single ingester handles all logs, with no sharding or distributed query execution.</p>
+
+<div class="language-yaml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">schema_config</span><span class="pi">:</span>
+  <span class="na">configs</span><span class="pi">:</span>
+    <span class="pi">-</span> <span class="na">from</span><span class="pi">:</span> <span class="s">2025-01-01</span> <span class="c1"># Start of the time range for which the schema applies</span>
+      <span class="na">store</span><span class="pi">:</span> <span class="s">tsdb</span> <span class="c1"># Store logs in a tsdb</span>
+      <span class="na">object_store</span><span class="pi">:</span> <span class="s">filesystem</span> <span class="c1"># Store object in the filesystem</span>
+      <span class="na">schema</span><span class="pi">:</span> <span class="s">v13</span> <span class="c1"># Schema version</span>
+      <span class="na">index</span><span class="pi">:</span>
+        <span class="na">prefix</span><span class="pi">:</span> <span class="s">index_</span> <span class="c1"># Prefix for the index files</span>
+        <span class="na">period</span><span class="pi">:</span> <span class="s">24h</span> <span class="c1"># Period for the index files</span>
+</code></pre></div></div>
+
+<p>Loki supports multiple schema versions; if migrating from an old Loki version, older schemas may also be defined, which can be achieved by specifying the start date of the particular schema version using <code class="language-plaintext highlighter-rouge">from</code>.</p>
+
+<p>The <code class="language-plaintext highlighter-rouge">tsdb</code> (Time Series Database) is the most efficient storage backend for Loki. Older backends (<code class="language-plaintext highlighter-rouge">boltdb-shipper</code>) are deprecated. It improves query performance and reduces memory usage compared to older <code class="language-plaintext highlighter-rouge">boltdb-shipper</code>.</p>
+
+<p><code class="language-plaintext highlighter-rouge">object_store: filesystem</code> defines where the log chunks are stored. Since this is a standalone deployment, the logs will be stored on local disk.</p>
+
+<p>The <code class="language-plaintext highlighter-rouge">index</code> <code class="language-plaintext highlighter-rouge">prefix</code> and <code class="language-plaintext highlighter-rouge">period</code> define the prefix for index files and frequency of creating new index files. For low volumes of logs, the <code class="language-plaintext highlighter-rouge">period</code> should be increased and lowered for high volume logs.</p>
+
+<div class="language-yaml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">limits_config</span><span class="pi">:</span>
+  <span class="na">allow_structured_metadata</span><span class="pi">:</span> <span class="no">true</span> <span class="c1"># Allow structured metadata</span>
+
+<span class="na">analytics</span><span class="pi">:</span>
+  <span class="na">reporting_enabled</span><span class="pi">:</span> <span class="no">false</span> <span class="c1"># Disable reporting</span>
+</code></pre></div></div>
+
+<p>The <code class="language-plaintext highlighter-rouge">limits_config</code> section in Loki is used to control resource usage and feature restrictions. Loki requires <code class="language-plaintext highlighter-rouge">allow_structured_metadata: true</code> when you send logs directly with metadata (for example via OpenTelemetry or JSON logs). Without it, Loki ignores or strips the structured metadata, making it impossible to filter logs based on fields like <code class="language-plaintext highlighter-rouge">app</code>, <code class="language-plaintext highlighter-rouge">env</code>, or <code class="language-plaintext highlighter-rouge">level</code>.</p>
+
+<p><code class="language-plaintext highlighter-rouge">reporting_enabled: false</code> disables telemetry reporting to Grafana Labs. Keeping it <code class="language-plaintext highlighter-rouge">false</code> is recommended for privacy.</p>
+
+<hr />
+
+<h2 id="configuration-of-prometheus">Configuration of Prometheus</h2>
+
+<p>Configuring the Prometheus scraper is one of the easiest steps in the entire setup. To get started, I set up Prometheus to scrape metrics from other components of the stack and the Proxmox hypervisor.</p>
+
+<div class="language-yaml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">global</span><span class="pi">:</span>
+  <span class="na">scrape_interval</span><span class="pi">:</span> <span class="s">1s</span> <span class="c1"># Default frequency to scrape targets</span>
+  <span class="na">evaluation_interval</span><span class="pi">:</span> <span class="s">15s</span> <span class="c1"># Default frequency to evaluate rules</span>
+</code></pre></div></div>
+
+<p>I set the global <code class="language-plaintext highlighter-rouge">scrape_interval</code> to <code class="language-plaintext highlighter-rouge">1s</code>, which is a bit aggressive but useful for near real time monitoring. However, you should adjust the interval based on your requirements and system constraints. Similarly, Prometheus evaluates its alerting and recording rules according to the interval defined by <code class="language-plaintext highlighter-rouge">evaluation_interval</code>.</p>
+
+<div class="language-yaml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">scrape_configs</span><span class="pi">:</span>
+  <span class="pi">-</span> <span class="na">job_name</span><span class="pi">:</span> <span class="s1">'</span><span class="s">pve'</span>
+    <span class="na">static_configs</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="na">targets</span><span class="pi">:</span>
+          <span class="pi">-</span> <span class="s2">"</span><span class="s">$PVE_NODE"</span> <span class="c1"># Proxmox VE node.</span>
+    <span class="na">metrics_path</span><span class="pi">:</span> <span class="s">/pve</span> <span class="c1"># Endpoint to scrape Proxmox VE metrics</span>
+    <span class="na">params</span><span class="pi">:</span>
+      <span class="na">module</span><span class="pi">:</span> <span class="pi">[</span><span class="nv">default</span><span class="pi">]</span>
+      <span class="na">cluster</span><span class="pi">:</span> <span class="pi">[</span><span class="s1">'</span><span class="s">1'</span><span class="pi">]</span>
+      <span class="na">node</span><span class="pi">:</span> <span class="pi">[</span><span class="s1">'</span><span class="s">1'</span><span class="pi">]</span>
+    <span class="na">relabel_configs</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="na">source_labels</span><span class="pi">:</span> <span class="pi">[</span><span class="nv">__address__</span><span class="pi">]</span>
+        <span class="na">target_label</span><span class="pi">:</span> <span class="s">__param_target</span>
+      <span class="pi">-</span> <span class="na">source_labels</span><span class="pi">:</span> <span class="pi">[</span><span class="nv">__param_target</span><span class="pi">]</span>
+        <span class="na">target_label</span><span class="pi">:</span> <span class="s">Eagle-7950X870</span>
+      <span class="pi">-</span> <span class="na">target_label</span><span class="pi">:</span> <span class="s">__address__</span>
+        <span class="na">replacement</span><span class="pi">:</span> <span class="s2">"</span><span class="s">$HOST:9221"</span> <span class="c1"># PVE exporter.</span>
+
+  <span class="pi">-</span> <span class="na">job_name</span><span class="pi">:</span> <span class="s2">"</span><span class="s">loki"</span>
+    <span class="na">static_configs</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="na">targets</span><span class="pi">:</span> <span class="pi">[</span><span class="s2">"</span><span class="s">$HOST:3100"</span><span class="pi">]</span>
+
+  <span class="pi">-</span> <span class="na">job_name</span><span class="pi">:</span> <span class="s2">"</span><span class="s">otel-collector"</span>
+    <span class="na">static_configs</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="na">targets</span><span class="pi">:</span> <span class="pi">[</span><span class="s2">"</span><span class="s">$HOST:8889"</span><span class="pi">]</span>
+
+  <span class="pi">-</span> <span class="na">job_name</span><span class="pi">:</span> <span class="s2">"</span><span class="s">grafana"</span>
+    <span class="na">metrics_path</span><span class="pi">:</span> <span class="s2">"</span><span class="s">/metrics"</span> <span class="c1"># Endpoint to scrape Grafana metrics</span>
+    <span class="na">static_configs</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="na">targets</span><span class="pi">:</span> <span class="pi">[</span><span class="s2">"</span><span class="s">$HOST:3000"</span><span class="pi">]</span>
+</code></pre></div></div>
+
+<p><strong>Prometheus scrapers</strong></p>
+
+<ol>
+  <li>
+    <p><code class="language-plaintext highlighter-rouge">prometheus-pve-exporter</code></p>
+
+    <p>The job <code class="language-plaintext highlighter-rouge">pve</code> scrapes metrics exposed by the <code class="language-plaintext highlighter-rouge">prometheus-pve-exporter</code>. The configuration is fairly simple, where you define the target nodes by specifying the IP address of the Proxmox server and its endpoints. For a single node, defining the <code class="language-plaintext highlighter-rouge">cluster</code> and <code class="language-plaintext highlighter-rouge">node</code> parameters is not necessary.</p>
+  </li>
+  <li>
+    <p><strong>Loki</strong></p>
+
+    <p>Loki is running on port <code class="language-plaintext highlighter-rouge">3100</code>, and Prometheus collects its metrics.</p>
+  </li>
+  <li>
+    <p><strong>OpenTelemetry Collector</strong></p>
+
+    <p>OpenTelemetry Collector exposes Prometheus metrics on port <code class="language-plaintext highlighter-rouge">8889</code>.</p>
+  </li>
+  <li>
+    <p><strong>Grafana</strong></p>
+
+    <p>Grafana exposes its metrics on a Prometheus compatible endpoint at <code class="language-plaintext highlighter-rouge">/metrics</code> on port <code class="language-plaintext highlighter-rouge">3000</code>.</p>
+  </li>
+</ol>
+
+<hr />
+
+<h2 id="configuration-of-proxmox-ve-exporter">Configuration of Proxmox VE Exporter</h2>
+
+<p>To export the metrics of the Proxmox hypervisor, create a PVE user with read only access to collect metrics. Attach the PVEAuditor role to a group and add the user in the group.</p>
+
+<div class="language-yaml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">default</span><span class="pi">:</span>
+  <span class="na">user</span><span class="pi">:</span> <span class="s">prometheus-pve-exporter@pve</span> <span class="c1"># Proxmox VE user</span>
+  <span class="na">password</span><span class="pi">:</span> <span class="s">$PROMETHEUS_PVE_EXPORTER_PASSWORD</span> <span class="c1"># Proxmox VE password</span>
+  <span class="na">verify_ssl</span><span class="pi">:</span> <span class="no">false</span> <span class="c1"># Disable SSL verification</span>
+</code></pre></div></div>
+
+<p>I created a user <code class="language-plaintext highlighter-rouge">prometheus-pve-exporter</code> and disabled SSL verification as I have no TLS certificate.</p>
+
+<hr />
+
+<h2 id="deployment-using-docker-compose">Deployment using Docker Compose</h2>
+
+<p>After configuring all the services, finally we can get started with deployment.</p>
+
+<ol>
+  <li>The Docker Compose file defines the following components:
+    <ul>
+      <li>Loki (log aggregation)</li>
+      <li>Prometheus (metrics collection)</li>
+      <li>Prometheus PVE Exporter (Proxmox VE metrics)</li>
+      <li>OpenTelemetry Collector (logs and metrics processing)</li>
+      <li>Grafana (visualisation and dashboards)</li>
+    </ul>
+  </li>
+  <li>
+    <p>All the containers pull the latest image and are set to restart on failure and system boot.</p>
+  </li>
+  <li>
+    <p>They are configured to run as non root users with appropriate user groups and access rights, ensuring secure access to specified host directories via bind mounts (more on this later). This enhances security while maintaining controlled access to necessary resources.</p>
+  </li>
+  <li>
+    <p>Configuration files are mounted as volumes to maintain consistency and ease of management across deployments.</p>
+  </li>
+  <li>
+    <p>Persistent storage is configured where applicable to retain data across restarts, preventing data loss.</p>
+  </li>
+  <li>
+    <p>Essential services are defined with explicit dependencies to ensure proper startup order, reducing failures caused by unavailable dependencies.</p>
+  </li>
+  <li>Network ports are mapped for external accessibility.</li>
+</ol>
+
+<div class="language-yaml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">services</span><span class="pi">:</span>
+  <span class="na">loki</span><span class="pi">:</span>
+    <span class="na">image</span><span class="pi">:</span> <span class="s">grafana/loki:latest</span> <span class="c1"># Use the official Loki image</span>
+    <span class="na">container_name</span><span class="pi">:</span> <span class="s">loki</span> <span class="c1"># Container name for Loki</span>
+    <span class="na">restart</span><span class="pi">:</span> <span class="s">unless-stopped</span> <span class="c1"># Restart the container automatically if it stops</span>
+    <span class="na">user</span><span class="pi">:</span> <span class="s2">"</span><span class="s">999:1000"</span> <span class="c1"># Run as specified user</span>
+    <span class="na">ports</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="s2">"</span><span class="s">3100:3100"</span> <span class="c1"># Expose Loki on port 3100</span>
+      <span class="pi">-</span> <span class="s2">"</span><span class="s">9095:9095"</span> <span class="c1"># Inter instance communication on port 9095</span>
+    <span class="na">volumes</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="s">/loki:/loki</span> <span class="c1"># Persist Loki data to the host</span>
+      <span class="pi">-</span> <span class="s">/etc/loki/local-config.yaml:/etc/loki/local-config.yaml</span> <span class="c1"># Mount the configuration file</span>
+
+  <span class="na">prometheus-pve-exporter</span><span class="pi">:</span>
+    <span class="na">image</span><span class="pi">:</span> <span class="s">prompve/prometheus-pve-exporter:latest</span> <span class="c1"># Use the official Prometheus PVE Exporter image</span>
+    <span class="na">container_name</span><span class="pi">:</span> <span class="s">prometheus-pve-exporter</span> <span class="c1"># Container name for Prometheus PVE Exporter</span>
+    <span class="na">init</span><span class="pi">:</span> <span class="no">true</span> <span class="c1"># Run the container as an init process</span>
+    <span class="na">restart</span><span class="pi">:</span> <span class="s">unless-stopped</span> <span class="c1"># Restart the container automatically if it stops</span>
+    <span class="na">user</span><span class="pi">:</span> <span class="s2">"</span><span class="s">996:1001"</span> <span class="c1"># Run as specified user</span>
+    <span class="na">ports</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="s2">"</span><span class="s">9221:9221"</span> <span class="c1"># Expose Prometheus PVE Exporter on port 9221</span>
+    <span class="na">volumes</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="s2">"</span><span class="s">/etc/prometheus/pve.yml:/etc/prometheus/pve.yml"</span> <span class="c1"># Mount the configuration file</span>
+    <span class="na">depends_on</span><span class="pi">:</span> <span class="c1"># Ensure Prometheus is started before Prometheus PVE Exporter</span>
+      <span class="pi">-</span> <span class="s">prometheus</span>
+
+  <span class="na">prometheus</span><span class="pi">:</span>
+    <span class="na">image</span><span class="pi">:</span> <span class="s">prom/prometheus:latest</span> <span class="c1"># Use the official Prometheus image</span>
+    <span class="na">container_name</span><span class="pi">:</span> <span class="s">prometheus</span> <span class="c1"># Container name for Prometheus</span>
+    <span class="na">restart</span><span class="pi">:</span> <span class="s">unless-stopped</span> <span class="c1"># Restart the container automatically if it stops</span>
+    <span class="na">user</span><span class="pi">:</span> <span class="s2">"</span><span class="s">996:1001"</span> <span class="c1"># Run as specified user</span>
+    <span class="na">ports</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="s2">"</span><span class="s">9090:9090"</span> <span class="c1"># Expose Prometheus on port 9090</span>
+    <span class="na">volumes</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="s">/prometheus:/prometheus</span> <span class="c1"># Persist Prometheus data to the host</span>
+      <span class="pi">-</span> <span class="s">/etc/prometheus/prometheus.yaml:/etc/prometheus/prometheus.yaml</span> <span class="c1"># Mount the configuration file</span>
+    <span class="na">command</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="s2">"</span><span class="s">--config.file=/etc/prometheus/prometheus.yaml"</span> <span class="c1"># Specifies the location of the Prometheus configuration file</span>
+      <span class="pi">-</span> <span class="s2">"</span><span class="s">--storage.tsdb.path=/prometheus"</span> <span class="c1"># Defines location to store tsdb data on disk</span>
+      <span class="pi">-</span> <span class="s2">"</span><span class="s">--web.enable-lifecycle"</span> <span class="c1"># Reload Prometheus configuration without restarting the container</span>
+      <span class="pi">-</span> <span class="s2">"</span><span class="s">--web.enable-remote-write-receiver"</span> <span class="c1"># Allows remote write requests from external sources</span>
+
+  <span class="na">otel-collector</span><span class="pi">:</span>
+    <span class="na">image</span><span class="pi">:</span> <span class="s">otel/opentelemetry-collector-contrib:latest</span>
+    <span class="na">container_name</span><span class="pi">:</span> <span class="s">otel-collector</span>
+    <span class="na">init</span><span class="pi">:</span> <span class="no">true</span> <span class="c1"># Run the container as an init process</span>
+    <span class="na">restart</span><span class="pi">:</span> <span class="s">unless-stopped</span> <span class="c1"># Restart the container automatically if it stops</span>
+    <span class="na">user</span><span class="pi">:</span> <span class="s2">"</span><span class="s">994:1003"</span> <span class="c1"># Run as specified user</span>
+    <span class="na">volumes</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="s">/etc/otelcol-contrib/config.yaml:/etc/otelcol-contrib/config.yaml</span> <span class="c1"># Mount OpenTelemetry Collector configuration</span>
+    <span class="na">ports</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="s2">"</span><span class="s">8889:8889"</span> <span class="c1"># Expose OpenTelemetry Collector's metrics</span>
+      <span class="pi">-</span> <span class="s2">"</span><span class="s">4318:4318"</span> <span class="c1"># OTLP HTTP receiver</span>
+      <span class="pi">-</span> <span class="s2">"</span><span class="s">4317:4317"</span> <span class="c1"># OTLP HTTP receiver for Loki exporter</span>
+
+  <span class="na">grafana</span><span class="pi">:</span>
+    <span class="na">image</span><span class="pi">:</span> <span class="s">grafana/grafana:latest</span> <span class="c1"># Use the official Grafana image</span>
+    <span class="na">container_name</span><span class="pi">:</span> <span class="s">grafana</span> <span class="c1"># Container name for Grafana</span>
+    <span class="na">restart</span><span class="pi">:</span> <span class="s">unless-stopped</span> <span class="c1"># Restart the container automatically if it stops</span>
+    <span class="na">user</span><span class="pi">:</span> <span class="s2">"</span><span class="s">995:1002"</span> <span class="c1"># Run as specified user</span>
+    <span class="na">ports</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="s2">"</span><span class="s">3000:3000"</span> <span class="c1"># Expose Grafana on port 3000</span>
+    <span class="na">volumes</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="s">/var/lib/grafana:/var/lib/grafana</span> <span class="c1"># Persist Grafana data to the host</span>
+    <span class="na">depends_on</span><span class="pi">:</span> <span class="c1"># Ensure dependent services are started before Grafana</span>
+      <span class="pi">-</span> <span class="s">loki</span>
+      <span class="pi">-</span> <span class="s">prometheus</span>
+      <span class="pi">-</span> <span class="s">otel-collector</span>
+</code></pre></div></div>
+
+<ol>
+  <li>
+    <p>By default, Prometheus only scrapes metrics from configured targets. Enabling the <code class="language-plaintext highlighter-rouge">--web.enable-remote-write-receiver</code> flag allows external sources (such as OpenTelemetry, other Prometheus instances, or third party tools) to push metrics into Prometheus via the Remote Write API. Prometheus will expose an API endpoint at:</p>
+
+    <p><code class="language-plaintext highlighter-rouge">http://${HOST}:9090/api/v1/write</code></p>
+  </li>
+  <li>
+    <p>The <code class="language-plaintext highlighter-rouge">--web.enable-lifecycle</code> flag allows Prometheus to reload its configuration without restarting the container or process. When this flag is enabled, Prometheus exposes a special HTTP endpoint:</p>
+
+    <p><code class="language-plaintext highlighter-rouge">http://&lt;prometheus-server&gt;:9090/-/reload</code></p>
+
+    <p>Sending a <code class="language-plaintext highlighter-rouge">POST</code> request to this endpoint makes Prometheus reload its configuration dynamically, meaning it applies changes to scrape jobs, alerting rules, or remote write settings without downtime.</p>
+  </li>
+</ol>
+
+<hr />
+
+<h2 id="deployment-challenges">Deployment Challenges</h2>
+
+<p>Once all services were configured, I encountered another set of hurdles:</p>
+
+<ol>
+  <li><code class="language-plaintext highlighter-rouge">permission denied</code> errors when containers tried to access host bind mounts. Running containers as root would have solved the issue, but this is an anti pattern and a serious security risk.</li>
+</ol>
+
+<p>To resolve this:</p>
+
+<ul>
+  <li>Created separate users and groups for each service.</li>
+  <li>Assigned appropriate permissions to only the required directories.</li>
+  <li>Configured UID and GID mappings in Docker Compose to enforce proper access control.</li>
+</ul>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># Create necessary directories for Grafana, Loki, Prometheus, and OpenTelemetry</span>
+<span class="nb">mkdir</span> <span class="nt">-p</span> /etc/loki /etc/otelcol-contrib /etc/prometheus /loki /prometheus /var/lib/grafana
+
+<span class="c"># Create users and groups for each service</span>
+groupadd loki-group
+useradd <span class="nt">-r</span> <span class="nt">-g</span> loki-group loki-user
+
+groupadd prometheus-group
+useradd <span class="nt">-r</span> <span class="nt">-g</span> prometheus-group prometheus-user
+
+groupadd grafana-group
+useradd <span class="nt">-r</span> <span class="nt">-g</span> grafana-group grafana-user
+
+groupadd otel-group
+useradd <span class="nt">-r</span> <span class="nt">-g</span> otel-group otel-user
+
+<span class="c"># Set ownership and permissions for directories</span>
+<span class="nb">chown </span>loki-user:loki-group /etc/loki /loki
+<span class="nb">chmod </span><span class="nv">u</span><span class="o">=</span>rwx,g<span class="o">=</span>rx,o<span class="o">=</span> /etc/loki /loki
+
+<span class="nb">chown </span>prometheus-user:prometheus-group /etc/prometheus /prometheus
+<span class="nb">chmod </span><span class="nv">u</span><span class="o">=</span>rwx,g<span class="o">=</span>rx,o<span class="o">=</span> /etc/prometheus /prometheus
+
+<span class="nb">chown </span>grafana-user:grafana-group /var/lib/grafana
+<span class="nb">chmod </span><span class="nv">u</span><span class="o">=</span>rwx,g<span class="o">=</span>rx,o<span class="o">=</span> /var/lib/grafana
+
+<span class="nb">chown </span>otel-user:otel-group /etc/otelcol-contrib
+<span class="nb">chmod </span><span class="nv">u</span><span class="o">=</span>rwx,g<span class="o">=</span>rx,o<span class="o">=</span> /etc/otelcol-contrib
+</code></pre></div></div>
+
+<ol>
+  <li><code class="language-plaintext highlighter-rouge">http://192.168.2.5:3100/otlp/v1/logs</code> responded with HTTP status code <code class="language-plaintext highlighter-rouge">404 Not Found</code>.</li>
+</ol>
+
+<p>Despite configuring everything correctly, requests to the endpoint kept returning a <code class="language-plaintext highlighter-rouge">404 Page Not Found</code> error. It was incredibly frustrating, as despite my meticulous attention to detail, the system simply refused to function as expected.</p>
+
+<p>While searching online for context, I came across related issues reported on the official GitHub repositories of Loki and OpenTelemetry Collector (<a href="https://github.com/grafana/loki/issues/14238">issue <code class="language-plaintext highlighter-rouge">14238</code></a> and <a href="https://github.com/open-telemetry/opentelemetry-collector-contrib/discussions/34233">issue <code class="language-plaintext highlighter-rouge">34233</code></a> respectively).</p>
+
+<p>I have a habit of always pulling the latest container image unless specific dependencies require otherwise. Since this system had no prior dependencies or legacy integrations, I proceeded as usual.</p>
+
+<p><em>This was the root cause of the issue.</em></p>
+
+<p>Native OTEL support for Loki was introduced in the <code class="language-plaintext highlighter-rouge">version 3.0</code>. However, for some reasons, <code class="language-plaintext highlighter-rouge">version 2.9.9</code> was published after the <code class="language-plaintext highlighter-rouge">version 3.1.0</code>, making the <code class="language-plaintext highlighter-rouge">latest</code> image the <code class="language-plaintext highlighter-rouge">version 2.9.9</code>.</p>
+
+<p>With the release of future versions, this issue is expected to be resolved. <em>(As of writing this article, the issue still persists.)</em></p>
+
+<hr />
+
+<p>Once all the services are up and running, check the status of Prometheus targets by accessing <code class="language-plaintext highlighter-rouge">http://host:9090/targets</code>. You should see all the targets up and running.</p>
+
+<p><img src="/blogs/posts/hosting-grafana-stack-using-docker-compose/prometheus-target-health.webp" alt="Prometheus Target Health" /></p>
+
+<p>Once you log into Grafana, add the data sources. Now you can explore the logs and metrics.</p>
+
+<p><img src="/blogs/posts/hosting-grafana-stack-using-docker-compose/grafana-data-sources.webp" alt="Grafana Data Sources" /></p>
+
+<p>Now you can explore the logs and metrics.</p>
+
+<p><img src="/blogs/posts/hosting-grafana-stack-using-docker-compose/logs-from-opentelemetry-collector-ingested-into-loki.webp" alt="Logs from OpenTelemetry Collector ingested into Loki" /></p>
+
+<p><img src="/blogs/posts/hosting-grafana-stack-using-docker-compose/metrics-collected-from-various-services.webp" alt="Metrics collected from various services" /></p>
+
+<p>You can create or import dashboards for visualisation. For instance, I imported the <a href="https://grafana.com/grafana/dashboards/10347-proxmox-via-prometheus/">Proxmox via Prometheus</a> dashboard to visualise all the metrics collected from the Proxmox hypervisor.</p>
+
+<p><img src="/blogs/posts/hosting-grafana-stack-using-docker-compose/proxmox-via-prometheus-dashboard.webp" alt="Proxmox via Prometheus Dashboard" /></p>
+
+<p><img src="/blogs/posts/hosting-grafana-stack-using-docker-compose/beautiful-visualization-of-various-metrics.webp" alt="Beautiful visualization of various metrics." /></p>
+
+<hr />
+
+<h2 id="installation-script">Installation script</h2>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+<span class="c"># Host IPv4 address</span>
+<span class="nv">HOST</span><span class="o">=</span><span class="s2">""</span>
+<span class="c"># Proxmox IPv4 address</span>
+<span class="nv">PVE_NODE</span><span class="o">=</span><span class="s2">""</span>
+<span class="c"># Password of PVE user with read-only access (PVEAuditor role)</span>
+<span class="nv">PROMETHEUS_PVE_EXPORTER_PASSWORD</span><span class="o">=</span><span class="s2">""</span>
+
+<span class="c"># Create necessary directories for Grafana, Loki, Prometheus, and OpenTelemetry</span>
+<span class="nb">mkdir</span> <span class="nt">-p</span> /etc/loki /etc/otelcol-contrib /etc/prometheus /loki /prometheus /var/lib/grafana
+
+<span class="c"># Create users and groups for each service</span>
+groupadd loki-group
+useradd <span class="nt">-r</span> <span class="nt">-g</span> loki-group loki-user
+
+groupadd prometheus-group
+useradd <span class="nt">-r</span> <span class="nt">-g</span> prometheus-group prometheus-user
+
+groupadd grafana-group
+useradd <span class="nt">-r</span> <span class="nt">-g</span> grafana-group grafana-user
+
+groupadd otel-group
+useradd <span class="nt">-r</span> <span class="nt">-g</span> otel-group otel-user
+
+<span class="c"># Set ownership and permissions for directories</span>
+<span class="nb">chown </span>loki-user:loki-group /etc/loki /loki
+<span class="nb">chmod </span><span class="nv">u</span><span class="o">=</span>rwx,g<span class="o">=</span>rx,o<span class="o">=</span> /etc/loki /loki
+
+<span class="nb">chown </span>prometheus-user:prometheus-group /etc/prometheus /prometheus
+<span class="nb">chmod </span><span class="nv">u</span><span class="o">=</span>rwx,g<span class="o">=</span>rx,o<span class="o">=</span> /etc/prometheus /prometheus
+
+<span class="nb">chown </span>grafana-user:grafana-group /var/lib/grafana
+<span class="nb">chmod </span><span class="nv">u</span><span class="o">=</span>rwx,g<span class="o">=</span>rx,o<span class="o">=</span> /var/lib/grafana
+
+<span class="nb">chown </span>otel-user:otel-group /etc/otelcol-contrib
+<span class="nb">chmod </span><span class="nv">u</span><span class="o">=</span>rwx,g<span class="o">=</span>rx,o<span class="o">=</span> /etc/otelcol-contrib
+
+<span class="c"># Loki configuration</span>
+<span class="nb">cat</span> <span class="o">&lt;&lt;</span><span class="no">EOF</span><span class="sh"> &gt; /etc/loki/local-config.yaml
+auth_enabled: false # Disable authentication
+
+server:
+  http_listen_port: 3100 # HTTP port for the server to listen on
+
+common:
+  instance_addr: "</span><span class="nv">$HOST</span><span class="sh">" # Address at which the instance can be reached by other Loki instances
+  path_prefix: /loki # Prefix for all HTTP endpoints
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks # Directory to store chunks in
+      rules_directory: /loki/rules # Directory to store rules in
+  replication_factor: 1 # Number of replicas of each log entry
+  ring:
+    kvstore:
+      store: inmemory # Key-value store for the ring
+
+schema_config:
+  configs:
+    - from: 2025-01-01 # Start of the time range for which the schema applies
+      store: tsdb # Store logs in a tsdb
+      object_store: filesystem # Store object in the filesystem
+      schema: v13 # Schema version
+      index:
+        prefix: index_ # Prefix for the index files
+        period: 24h # Period for the index files
+
+limits_config:
+  allow_structured_metadata: true # Allow structured metadata
+
+analytics:
+  reporting_enabled: false # Disable reporting
+</span><span class="no">EOF
+
+</span><span class="c"># Prometheus configuration</span>
+<span class="nb">cat</span> <span class="o">&lt;&lt;</span><span class="no">EOF</span><span class="sh"> &gt; /etc/prometheus/prometheus.yaml
+global:
+  scrape_interval: 1s # Default frequency to scrape targets
+  evaluation_interval: 15s # Default frequency to evaluate rules
+
+scrape_configs:
+  - job_name: 'pve'
+    static_configs:
+      - targets:
+          - "</span><span class="nv">$PVE_NODE</span><span class="sh">" # Proxmox VE node.
+    metrics_path: /pve # Endpoint to scrape Proxmox VE metrics
+    params:
+      module: [default]
+      cluster: ['1']
+      node: ['1']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: Eagle-7950X870
+      - target_label: __address__
+        replacement: "</span><span class="nv">$HOST</span><span class="sh">:9221" # PVE exporter.
+
+  - job_name: "loki"
+    static_configs:
+      - targets: ["</span><span class="nv">$HOST</span><span class="sh">:3100"]
+
+  - job_name: "otel-collector"
+    static_configs:
+      - targets: ["</span><span class="nv">$HOST</span><span class="sh">:8889"]
+
+  - job_name: "grafana"
+    metrics_path: "/metrics" # Endpoint to scrape Grafana metrics
+    static_configs:
+      - targets: ["</span><span class="nv">$HOST</span><span class="sh">:3000"]
+</span><span class="no">EOF
+
+</span><span class="c"># Proxmox VE Exporter configuration</span>
+<span class="nb">cat</span> <span class="o">&lt;&lt;</span><span class="no">EOF</span><span class="sh"> &gt; /etc/prometheus/pve.yml
+default:
+  user: prometheus-pve-exporter@pve # Proxmox VE user
+  password: </span><span class="nv">$PROMETHEUS_PVE_EXPORTER_PASSWORD</span><span class="sh"> # Proxmox VE password
+  verify_ssl: false # Disable SSL verification
+</span><span class="no">EOF
+
+</span><span class="c"># OpenTelemetry Collector configuration</span>
+<span class="nb">cat</span> <span class="o">&lt;&lt;</span><span class="no">EOF</span><span class="sh"> &gt; /etc/otelcol-contrib/config.yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: "0.0.0.0:4318" # Endpoint for receiving OTLP over HTTP
+
+  otlp/loki:
+    protocols:
+      http:
+        endpoint: "0.0.0.0:4317" # Endpoint for receiving Logs for Loki exporter
+
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: otel-collector
+          static_configs:
+            - targets:  # Prometheus scrape target for OpenTelemetry Collector
+
+processors:
+  memory_limiter:
+    check_interval: 1s # Check memory limits every 1 second
+    limit_percentage: 50 # Limit memory usage to the percentage of available memory (hard limit)
+    spike_limit_percentage: 10 # Limit memory usage to the percentage of available memory (soft limit)
+
+  batch:
+
+exporters:
+  otlphttp:
+    endpoint: "http://</span><span class="k">${</span><span class="nv">HOST</span><span class="k">}</span><span class="sh">:3100/otlp" # Export logs to Loki via OTLP
+
+  loki:
+    endpoint: "http://</span><span class="k">${</span><span class="nv">HOST</span><span class="k">}</span><span class="sh">:3100/loki/api/v1/push" # Export logs to Loki via API
+
+  prometheus:
+    endpoint: "0.0.0.0:8889" # Expose Prometheus metrics endpoint
+    namespace: default # Namespace for the metrics
+
+  prometheusremotewrite:
+    endpoint: "http://</span><span class="k">${</span><span class="nv">HOST</span><span class="k">}</span><span class="sh">:9090/api/v1/write" # Remote write to Prometheus
+    tls:
+      insecure: true # Allow insecure TLS connections
+
+service:
+  pipelines:
+    logs/otlp:
+      receivers: [otlp] # Use OTLP receiver for logs
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp]
+
+    logs/loki:
+      receivers: [otlp/loki] # Use Loki Exporter for logs
+      processors: [memory_limiter, batch]
+      exporters: [loki]
+
+    metrics:
+      receivers: [otlp, prometheus] # Use OTLP and Prometheus receivers for metrics
+      processors: [memory_limiter]
+      exporters: [prometheus, prometheusremotewrite]
+
+  telemetry:
+    logs:
+      processors:
+        - batch:
+      exporter:
+        otlp:
+          protocol: http/protobuf
+          endpoint: "http://</span><span class="k">${</span><span class="nv">HOST</span><span class="k">}</span><span class="sh">:4318"
+</span><span class="no">EOF
+
+</span><span class="c"># Create Docker Compose file</span>
+<span class="nb">cat</span> <span class="o">&lt;&lt;</span><span class="no">EOF</span><span class="sh"> &gt; docker-compose.yaml
+version: "3.8" # Docker Compose version
+
+services:
+  loki:
+    image: grafana/loki:latest # Use the official Loki image
+    container_name: loki # Container name for Loki
+    restart: unless-stopped # Restart the container automatically if it stops
+    user: "999:1000" # Run as specified user
+    ports:
+      - "3100:3100" # Expose Loki on port 3100
+      - "9095:9095" # Inter instance communication on port 9095
+    volumes:
+      - /loki:/loki # Persist Loki data to the host
+      - /etc/loki/local-config.yaml:/etc/loki/local-config.yaml # Mount the configuration file
+
+  prometheus-pve-exporter:
+    image: prompve/prometheus-pve-exporter:latest # Use the official Prometheus PVE Exporter image
+    container_name: prometheus-pve-exporter # Container name for Prometheus PVE Exporter
+    init: true # Run the container as an init process
+    restart: unless-stopped # Restart the container automatically if it stops
+    user: "996:1001" # Run as specified user
+    ports:
+      - "9221:9221" # Expose Prometheus PVE Exporter on port 9221
+    volumes:
+      - "/etc/prometheus/pve.yml:/etc/prometheus/pve.yml" # Mount the configuration file
+
+  prometheus:
+    image: prom/prometheus:latest # Use the official Prometheus image
+    container_name: prometheus # Container name for Prometheus
+    restart: unless-stopped # Restart the container automatically if it stops
+    user: "996:1001" # Run as specified user
+    ports:
+      - "9090:9090" # Expose Prometheus on port 9090
+    volumes:
+      - /prometheus:/prometheus # Persist Prometheus data to the host
+      - /etc/prometheus/prometheus.yaml:/etc/prometheus/prometheus.yaml # Mount the configuration file
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yaml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--web.enable-lifecycle"
+      - "--web.enable-remote-write-receiver"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector
+    restart: unless-stopped # Restart the container automatically if it stops
+    user: "994:1003" # Run as specified user
+    volumes:
+      - /etc/otelcol-contrib/config.yaml:/etc/otelcol-contrib/config.yaml # Mount OpenTelemetry Collector configuration
+    ports:
+      - "8889:8889" # Expose OpenTelemetry Collector's metrics
+      - "4318:4318" # OTLP HTTP receiver
+      - "4317:4317" # OTLP HTTP receiver for Loki exporter
+
+  grafana:
+    image: grafana/grafana:latest # Use the official Grafana image
+    container_name: grafana # Container name for Grafana
+    restart: unless-stopped # Restart the container automatically if it stops
+    user: "995:1002" # Run as specified user
+    ports:
+      - "3000:3000" # Expose Grafana on port 3000
+    volumes:
+      - /var/lib/grafana:/var/lib/grafana # Persist Grafana data to the host
+    depends_on: # Ensure dependent services are started before Grafana
+      - loki
+      - prometheus
+      - otel-collector
+</span><span class="no">EOF
+
+</span><span class="c"># Start Docker Compose</span>
+docker compose up
+</code></pre></div></div>
+
+  </div>
+</article>
+
+<script>
+  document.addEventListener("DOMContentLoaded", function() {
+    const contentImages = document.querySelectorAll('.post-body img');
+    
+    contentImages.forEach(function(img) {
+      const altText = img.getAttribute('alt');
+      
+      if (altText && altText.trim() !== "") {
+        const caption = document.createElement('span');
+        caption.className = 'image-caption';
+        caption.textContent = altText;
+        
+        img.parentNode.insertBefore(caption, img.nextSibling);
+      }
+    });
+  });
+</script>
+
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+  // --- 1. Sidebar Toggle Logic ---
+  const sidebar = document.getElementById('toc-sidebar');
+  const toggleBtn = document.getElementById('toc-toggle-btn');
+  const closeBtn = document.getElementById('toc-close-btn');
+
+  function openSidebar() { sidebar.classList.add('open'); }
+  function closeSidebar() { sidebar.classList.remove('open'); }
+
+  toggleBtn.addEventListener('click', openSidebar);
+  closeBtn.addEventListener('click', closeSidebar);
+
+  // Close sidebar when clicking outside of it (optional but good for UX)
+  document.addEventListener('click', function(event) {
+    if (sidebar.classList.contains('open') && 
+        !sidebar.contains(event.target) && 
+        !toggleBtn.contains(event.target)) {
+      closeSidebar();
+    }
+  });
+
+  // --- 2. Generate TOC ---
+  const article = document.querySelector('.post-body');
+  const tocContainer = document.getElementById('toc-content');
+  const headings = article.querySelectorAll('h1, h2, h3, h4, h5, h6');
+  
+  if (headings.length === 0) {
+    toggleBtn.style.display = 'none'; // Hide button if no headings exist
+    return;
+  }
+
+  const list = document.createElement('ul');
+  list.style.listStyleType = 'none';
+  list.style.paddingLeft = '0';
+  
+  headings.forEach((heading, index) => {
+    if (!heading.id) heading.id = 'heading-' + index; // Ensure ID exists
+    
+    const level = parseInt(heading.tagName.charAt(1));
+    const li = document.createElement('li');
+    li.style.marginLeft = ((level - 1) * 12) + 'px';
+    li.style.marginBottom = '6px';
+    
+    const a = document.createElement('a');
+    a.href = '#' + heading.id;
+    a.textContent = heading.textContent;
+    a.className = 'toc-link'; // Class for CSS styling and selecting
+    a.dataset.targetId = heading.id; // Store target ID for the observer
+
+    // Clicking a link on mobile should close the sidebar
+    a.addEventListener('click', () => {
+      if (window.innerWidth < 1024) closeSidebar();
+    });
+
+    li.appendChild(a);
+    list.appendChild(li);
+  });
+  
+  tocContainer.appendChild(list);
+
+  // --- 3. Intersection Observer for Active State ---
+  const tocLinks = document.querySelectorAll('.toc-link');
+  
+  // Set up the observer options (trigger when heading is near the top of viewport)
+  const observerOptions = {
+    root: null,
+    rootMargin: '0px 0px -80% 0px', // Triggers when heading is in the top 20% of screen
+    threshold: 1.0
+  };
+
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        // Remove active class from all links
+        tocLinks.forEach(link => link.classList.remove('active'));
+        
+        // Add active class to the currently intersecting heading's link
+        const activeLink = document.querySelector(`.toc-link[data-target-id="${entry.target.id}"]`);
+        if (activeLink) {
+          activeLink.classList.add('active');
+          // Optional: Scroll the sidebar to keep the active link in view
+          activeLink.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+      }
+    });
+  }, observerOptions);
+
+  // Observe all headings
+  headings.forEach(heading => observer.observe(heading));
+});
+</script>
+  </main>
+
+  <footer class="footer">
+        <div class="footer__content">
+            <a href="https://bitninja.dev" target="_blank" rel="noopener noreferrer" class="footer-logo-link">
+                <img src="/blogs/images/name.png" alt="BitNinja Technology" class="footer__logo">
+            </a>
+            <div class="footer__text">
+                <p><strong>BitNinja Technology<sup>™</sup></strong> is a trademark application of BitNinja Technology (7302564), a proprietorship registered under UDYAM-MH-26-0996429. Reach us at <a href="mailto:info@bitninja.dev" target="_blank" rel="noopener noreferrer">info@bitninja.dev</a>.</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>
